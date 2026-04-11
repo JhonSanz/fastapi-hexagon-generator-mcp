@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hexagonal-generator": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/absolute/path/to/hexagonal-mcp-server",
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/hexagonal-mcp-server"
+      }
+    }
+  }
+}
