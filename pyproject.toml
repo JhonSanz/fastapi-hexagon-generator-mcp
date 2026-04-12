@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "hexagonal-mcp-server"
@@ -9,7 +9,7 @@ description = "MCP Server for generating FastAPI CRUD modules with hexagonal arc
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=0.1.0",
-    "hexagon-generator @ git+https://github.com/JhonSanz/empty-fastapi-hexagonal.git",
+    "hexagon-generator",
 ]
 
 [project.scripts]
