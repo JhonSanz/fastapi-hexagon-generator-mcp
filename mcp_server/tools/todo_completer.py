@@ -1,6 +1,7 @@
 """Tool to intelligently complete TODO comments in generated code."""
 
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,89 @@ from ..prompts.completion_prompts import (
     get_use_case_prompt,
 )
 
+TODO_PATTERN = re.compile(r'#\s*TODO:?\s*(.+)', re.IGNORECASE)
+
+
+def _determine_category(file_path: Path) -> str:
+    """Determine the architecture layer category from a file path."""
+    parts = file_path.parts
+    if "domain" in parts:
+        return "domain"
+    elif "application" in parts:
+        return "application"
+    elif "infrastructure" in parts:
+        return "infrastructure"
+    return "unknown"
+
+
+def _extract_todos_from_file(file_path: Path) -> list[dict[str, Any]]:
+    """Extract TODO comments from a single file."""
+    todos = []
+    content = file_path.read_text(encoding="utf-8")
+
+    for line_num, line in enumerate(content.split("\n"), start=1):
+        match = TODO_PATTERN.search(line)
+        if match:
+            todos.append({
+                "line_number": line_num,
+                "content": match.group(1).strip(),
+                "original_line": line.strip(),
+            })
+
+    return todos
+
+
+def scan_module_todos(module_path: Path) -> dict[str, Any]:
+    """Scan a generated module directory for all TODO comments.
+
+    Args:
+        module_path: Absolute path to the module directory (e.g. .../src/school)
+
+    Returns:
+        Dictionary with todos and summary, same shape as the old static list.
+    """
+    if not module_path.is_dir():
+        return {
+            "success": False,
+            "error": f"Module directory not found: {module_path}",
+        }
+
+    todos = []
+    category_counter: Counter = Counter()
+    file_type_counter: Counter = Counter()
+
+    for py_file in sorted(module_path.rglob("*.py")):
+        file_todos = _extract_todos_from_file(py_file)
+        if not file_todos:
+            continue
+
+        category = _determine_category(py_file)
+        file_type = py_file.stem
+        rel_path = py_file.relative_to(module_path.parent.parent)
+
+        for todo in file_todos:
+            todo["file_path"] = str(rel_path)
+            todo["category"] = category
+            todo["file_type"] = file_type
+            todos.append(todo)
+
+        category_counter[category] += len(file_todos)
+        file_type_counter[file_type] += len(file_todos)
+
+    module_name = module_path.name
+
+    return {
+        "success": True,
+        "module": module_name,
+        "total_todos": len(todos),
+        "todos": todos,
+        "summary": {
+            "by_category": dict(category_counter),
+            "by_file_type": dict(file_type_counter),
+            "total": len(todos),
+        },
+    }
+
 
 class TodoCompleter:
     """Intelligently completes TODO comments while respecting hexagonal architecture."""
@@ -19,13 +103,18 @@ class TodoCompleter:
     def __init__(self):
         """Initialize the completer."""
         self.prompt_map = {
-            "dtos": get_domain_dto_prompt,
-            "models": get_domain_model_prompt,
+            # Domain layer
+            "entities": get_domain_dto_prompt,
+            # Application layer
             "schemas": get_schema_prompt,
-            "repository": get_repository_prompt,
+            "create": get_use_case_prompt,
+            "update": get_use_case_prompt,
+            "list": get_use_case_prompt,
+            "retrieve": get_use_case_prompt,
+            "delete": get_use_case_prompt,
+            # Infrastructure layer
+            "models": get_domain_model_prompt,
             "database": get_repository_prompt,
-            "web_cases": get_use_case_prompt,
-            "handlers": get_use_case_prompt,
         }
 
     async def complete_file_todos(
@@ -51,7 +140,7 @@ class TodoCompleter:
 
         # Determine file type
         file_type = file_path.stem
-        category = self._determine_category(file_path)
+        category = _determine_category(file_path)
 
         # Get appropriate prompt
         prompt_func = self.prompt_map.get(file_type)
@@ -62,7 +151,7 @@ class TodoCompleter:
             }
 
         # Extract TODOs
-        todos = self._extract_todos(content)
+        todos = _extract_todos_from_file(file_path)
 
         if not todos:
             return {
@@ -96,44 +185,3 @@ class TodoCompleter:
         }
 
         return result
-
-    def _extract_todos(self, content: str) -> list[dict[str, Any]]:
-        """Extract TODO comments from file content.
-
-        Args:
-            content: File content
-
-        Returns:
-            List of TODO dictionaries
-        """
-        todos = []
-        todo_pattern = re.compile(r'#\s*TODO:?\s*(.+)', re.IGNORECASE)
-
-        for line_num, line in enumerate(content.split('\n'), start=1):
-            match = todo_pattern.search(line)
-            if match:
-                todos.append({
-                    "line_number": line_num,
-                    "content": match.group(1).strip(),
-                    "original_line": line.strip()
-                })
-
-        return todos
-
-    def _determine_category(self, file_path: Path) -> str:
-        """Determine the architecture layer category.
-
-        Args:
-            file_path: Path to the file
-
-        Returns:
-            Category name (domain, application, infrastructure)
-        """
-        parts = file_path.parts
-        if "domain" in parts:
-            return "domain"
-        elif "application" in parts:
-            return "application"
-        elif "infrastructure" in parts:
-            return "infrastructure"
-        return "unknown"
