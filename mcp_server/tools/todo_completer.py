@@ -8,6 +8,8 @@ from typing import Any
 from ..prompts.completion_prompts import (
     get_domain_dto_prompt,
     get_domain_model_prompt,
+    get_exceptions_mapping_prompt,
+    get_router_prompt,
     get_schema_prompt,
     get_repository_prompt,
     get_use_case_prompt,
@@ -45,8 +47,38 @@ def _extract_todos_from_file(file_path: Path) -> list[dict[str, Any]]:
     return todos
 
 
+def _scan_directory_todos(
+    scan_path: Path,
+    rel_base: Path,
+    todos: list,
+    category_counter: Counter,
+    file_type_counter: Counter,
+) -> None:
+    """Scan a directory for TODO comments and append results to the provided lists."""
+    if not scan_path.is_dir():
+        return
+
+    for py_file in sorted(scan_path.rglob("*.py")):
+        file_todos = _extract_todos_from_file(py_file)
+        if not file_todos:
+            continue
+
+        category = _determine_category(py_file)
+        file_type = py_file.stem
+        rel_path = py_file.relative_to(rel_base)
+
+        for todo in file_todos:
+            todo["file_path"] = str(rel_path)
+            todo["category"] = category
+            todo["file_type"] = file_type
+            todos.append(todo)
+
+        category_counter[category] += len(file_todos)
+        file_type_counter[file_type] += len(file_todos)
+
+
 def scan_module_todos(module_path: Path) -> dict[str, Any]:
-    """Scan a generated module directory for all TODO comments.
+    """Scan a generated module directory and src/common for all TODO comments.
 
     Args:
         module_path: Absolute path to the module directory (e.g. .../src/school)
@@ -60,27 +92,20 @@ def scan_module_todos(module_path: Path) -> dict[str, Any]:
             "error": f"Module directory not found: {module_path}",
         }
 
-    todos = []
+    todos: list[dict[str, Any]] = []
     category_counter: Counter = Counter()
     file_type_counter: Counter = Counter()
 
-    for py_file in sorted(module_path.rglob("*.py")):
-        file_todos = _extract_todos_from_file(py_file)
-        if not file_todos:
-            continue
+    # src/ is the parent of the module directory
+    src_path = module_path.parent
+    rel_base = src_path.parent  # project root, so paths show as src/...
 
-        category = _determine_category(py_file)
-        file_type = py_file.stem
-        rel_path = py_file.relative_to(module_path.parent.parent)
+    # Scan the module itself
+    _scan_directory_todos(module_path, rel_base, todos, category_counter, file_type_counter)
 
-        for todo in file_todos:
-            todo["file_path"] = str(rel_path)
-            todo["category"] = category
-            todo["file_type"] = file_type
-            todos.append(todo)
-
-        category_counter[category] += len(file_todos)
-        file_type_counter[file_type] += len(file_todos)
+    # Scan src/common/ for wiring TODOs (router, exceptions_mapping, etc.)
+    common_path = src_path / "common"
+    _scan_directory_todos(common_path, rel_base, todos, category_counter, file_type_counter)
 
     module_name = module_path.name
 
@@ -115,6 +140,9 @@ class TodoCompleter:
             # Infrastructure layer
             "models": get_domain_model_prompt,
             "database": get_repository_prompt,
+            # Common wiring
+            "router": get_router_prompt,
+            "exceptions_mapping": get_exceptions_mapping_prompt,
         }
 
     async def complete_file_todos(

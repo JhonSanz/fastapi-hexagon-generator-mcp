@@ -147,6 +147,46 @@ Delete any existing TODO comments after completion.
 Return ONLY the completed business logic (validations, error handling, etc.)."""
 
 
+def get_router_prompt(
+    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
+) -> str:
+    """Generate prompt for completing router registration."""
+    return f"""Complete {len(todos)} TODO(s) in the API router: src/common/router.py
+Context: {context or 'N/A'}
+Rules: Import the router from the module's infrastructure/web.py and include it in api_router.
+
+TODOs:
+{_format_todos(todos)}
+
+Code context:
+```python
+{_get_file_context(file_content, todos)}
+```
+
+Delete any existing TODO comments after completion.
+Return ONLY the completed import and include_router lines."""
+
+
+def get_exceptions_mapping_prompt(
+    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
+) -> str:
+    """Generate prompt for completing exception handler registration."""
+    return f"""Complete {len(todos)} TODO(s) in the exceptions mapping: src/common/exceptions_mapping.py
+Context: {context or 'N/A'}
+Rules: Import the module's EXCEPTIONS_<MODULE>_MAPPING from infrastructure/exception_handlers.py and append it to ALL_EXCEPTIONS.
+
+TODOs:
+{_format_todos(todos)}
+
+Code context:
+```python
+{_get_file_context(file_content, todos)}
+```
+
+Delete any existing TODO comments after completion.
+Return ONLY the completed import and ALL_EXCEPTIONS append lines."""
+
+
 def _format_todos(todos: list[dict[str, Any]]) -> str:
     """Format TODO list for display in prompt.
 
