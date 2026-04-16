@@ -14,6 +14,8 @@ from hexagon_generator.core.generator_factory import GeneratorFactory
 from hexagon_generator.utils.validators import normalize_name
 
 from .tools.todo_completer import TodoCompleter, scan_module_todos
+from .tools.field_propagator import FieldPropagator
+from .tools.module_wirer import ModuleWirer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +34,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Generate a complete CRUD module following hexagonal architecture. "
                 "Creates domain entities, repositories, use cases, Pydantic schemas, ORM models, and API routes. "
-                "The generated code includes TODO comments for domain-specific logic that needs completion."
+                "The generated code includes TODO comments that can be completed with define_fields, wire_module, and complete_todos."
             ),
             inputSchema={
                 "type": "object",
@@ -43,10 +45,97 @@ async def list_tools() -> list[Tool]:
                     },
                     "project_path": {
                         "type": "string",
-                        "description": "Path to the FastAPI project where code will be generated (default: 'generated_project')",
+                        "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
                     },
                 },
-                "required": ["module_name"],
+                "required": ["module_name", "project_path"],
+            },
+        ),
+        Tool(
+            name="define_fields",
+            description=(
+                "Define fields for a module and propagate them across all hexagonal layers. "
+                "Automatically completes field-related TODOs in domain entities, ORM models, "
+                "Pydantic schemas, and repository mappers. Run this after generate_crud."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "module_name": {
+                        "type": "string",
+                        "description": "Name of the module (e.g., 'school')",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
+                    },
+                    "fields": {
+                        "type": "array",
+                        "description": "List of field definitions to propagate",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Field name in snake_case (e.g., 'student_count')",
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "description": "Python type: str, int, float, bool, datetime, date, Decimal",
+                                    "enum": ["str", "int", "float", "bool", "datetime", "date", "Decimal"],
+                                },
+                                "max_length": {
+                                    "type": "integer",
+                                    "description": "Max length for string fields (generates String(N) in SQLAlchemy)",
+                                },
+                                "min_length": {
+                                    "type": "integer",
+                                    "description": "Min length for string fields",
+                                },
+                                "nullable": {
+                                    "type": "boolean",
+                                    "description": "Whether the field allows null (default: false)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Human-readable description for API docs",
+                                },
+                                "searchable": {
+                                    "type": "boolean",
+                                    "description": "Whether this field is searchable/filterable (default: false)",
+                                },
+                                "gt": {"type": "number", "description": "Greater than constraint"},
+                                "ge": {"type": "number", "description": "Greater than or equal constraint"},
+                                "lt": {"type": "number", "description": "Less than constraint"},
+                                "le": {"type": "number", "description": "Less than or equal constraint"},
+                            },
+                            "required": ["name", "type"],
+                        },
+                    },
+                },
+                "required": ["module_name", "project_path", "fields"],
+            },
+        ),
+        Tool(
+            name="wire_module",
+            description=(
+                "Register a module's router and exception handlers in the project. "
+                "Automatically completes wiring TODOs in src/common/router.py and "
+                "src/common/exceptions_mapping.py. Run this after generate_crud."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "module_name": {
+                        "type": "string",
+                        "description": "Name of the module to wire (e.g., 'school')",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
+                    },
+                },
+                "required": ["module_name", "project_path"],
             },
         ),
         Tool(
@@ -64,17 +153,18 @@ async def list_tools() -> list[Tool]:
                     },
                     "project_path": {
                         "type": "string",
-                        "description": "Path to the FastAPI project (default: 'generated_project')",
+                        "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
                     },
                 },
-                "required": ["module_name"],
+                "required": ["module_name", "project_path"],
             },
         ),
         Tool(
             name="complete_todos",
             description=(
-                "Intelligently complete TODO comments in a specific file while respecting hexagonal architecture principles. "
-                "Analyzes context and generates appropriate domain logic, validations, or business rules."
+                "Complete remaining TODOs in a file. Default action 'remove' deletes TODO comments directly. "
+                "Use 'guidance' to get suggestions instead. "
+                "For field declarations use define_fields. For wiring use wire_module."
             ),
             inputSchema={
                 "type": "object",
@@ -83,9 +173,15 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Absolute path to the file containing TODOs to complete",
                     },
+                    "action": {
+                        "type": "string",
+                        "enum": ["remove", "guidance"],
+                        "description": "Action: 'remove' deletes TODO comments from file (default), 'guidance' returns suggestions",
+                        "default": "remove",
+                    },
                     "context": {
                         "type": "string",
-                        "description": "Additional context about the domain (e.g., 'A school has name, address, and manages students')",
+                        "description": "Additional context about the domain (only used with action='guidance')",
                     },
                 },
                 "required": ["file_path"],
@@ -109,29 +205,54 @@ async def list_tools() -> list[Tool]:
                     },
                     "project_path": {
                         "type": "string",
-                        "description": "Path to the FastAPI project (default: 'generated_project')",
+                        "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
                     },
                 },
-                "required": ["app_name"],
+                "required": ["app_name", "project_path"],
             },
         ),
     ]
 
 
+def _resolve_project_path(arguments: dict[str, Any]) -> str:
+    """Extract and validate project_path from tool arguments.
+
+    The LLM must provide an absolute path. Since the MCP server runs in its
+    own cwd (which differs from the LLM's), relative paths would resolve
+    incorrectly.
+    """
+    raw = arguments.get("project_path", "")
+    if not raw:
+        raise ValueError(
+            "project_path is required and must be an absolute path "
+            "(e.g., '/home/user/my-project')"
+        )
+    p = Path(raw)
+    if not p.is_absolute():
+        raise ValueError(
+            f"project_path must be an absolute path, got relative: '{raw}'. "
+            f"Use the full path (e.g., '/home/user/my-project')"
+        )
+    return str(p)
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     """Handle tool calls."""
+    logger.info(f"Tool called: {name} with arguments: {arguments}")
     try:
-        if name == "generate_crud":
-            return await handle_generate_crud(arguments)
-        elif name == "list_todos":
-            return await handle_list_todos(arguments)
-        elif name == "complete_todos":
-            return await handle_complete_todos(arguments)
-        elif name == "generate_builtin":
-            return await handle_generate_builtin(arguments)
-        else:
-            return [TextContent(type="text", text=f"Unknown tool: {name}")]
+        handlers = {
+            "generate_crud": handle_generate_crud,
+            "define_fields": handle_define_fields,
+            "wire_module": handle_wire_module,
+            "list_todos": handle_list_todos,
+            "complete_todos": handle_complete_todos,
+            "generate_builtin": handle_generate_builtin,
+        }
+        handler = handlers.get(name)
+        if handler:
+            return await handler(arguments)
+        return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
         logger.error(f"Error calling tool {name}: {e}", exc_info=True)
         return [TextContent(type="text", text=f"Error: {str(e)}")]
@@ -140,27 +261,21 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 async def handle_generate_crud(arguments: dict[str, Any]) -> list[TextContent]:
     """Generate CRUD module using the hexagonal generator."""
     module_name = arguments["module_name"]
-    project_path = arguments.get("project_path", "generated_project")
+    project_path = _resolve_project_path(arguments)
 
-    # Import constant to modify TARGET_ROOT temporarily
     from hexagon_generator.core import constant
 
-    # Save original TARGET_ROOT
     original_target_root = constant.TARGET_ROOT
 
     try:
-        # Set custom project path
         constant.TARGET_ROOT = project_path
 
-        # Normalize the module name
         pascal_name, snake_name = normalize_name(module_name)
 
-        # Generate the CRUD module using the factory
         generator = GeneratorFactory()
         generator.create_base_generator().run()
         generator.create_crud_generator(pascal_name).run()
 
-        # Dynamically scan generated files for TODOs
         module_path = Path(constant.TARGET_ROOT) / "src" / snake_name
         todo_info = scan_module_todos(module_path)
 
@@ -169,32 +284,81 @@ async def handle_generate_crud(arguments: dict[str, Any]) -> list[TextContent]:
             "module": snake_name,
             "pascal_name": pascal_name,
             "project_path": project_path,
-            "message": f"CRUD module '{pascal_name}' generated successfully",
-            "todos_found": todo_info["total_todos"],
-            "todos": todo_info["todos"],
-            "summary": todo_info["summary"],
+            "message": f"CRUD module '{pascal_name}' generated with {todo_info['total_todos']} TODOs",
+            "next_steps": [
+                f"define_fields module_name='{snake_name}' to declare fields",
+                f"wire_module module_name='{snake_name}' to register routes",
+                "complete_todos on use case files to clean up business logic placeholders",
+            ],
         }
 
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result))]
 
     except Exception as e:
         logger.error(f"Error generating CRUD: {e}", exc_info=True)
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"success": False, "error": str(e)}, indent=2),
+                text=json.dumps({"success": False, "error": str(e)}),
             )
         ]
 
     finally:
-        # Always restore original TARGET_ROOT
         constant.TARGET_ROOT = original_target_root
+
+
+async def handle_define_fields(arguments: dict[str, Any]) -> list[TextContent]:
+    """Define fields and propagate them across all hexagonal layers."""
+    module_name = arguments["module_name"]
+    project_path = _resolve_project_path(arguments)
+    fields = arguments["fields"]
+
+    try:
+        propagator = FieldPropagator(
+            module_name=module_name,
+            project_path=project_path,
+            fields=fields,
+        )
+        result = propagator.propagate()
+        return [TextContent(type="text", text=json.dumps(result))]
+
+    except Exception as e:
+        logger.error(f"Error defining fields: {e}", exc_info=True)
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"success": False, "error": str(e)}),
+            )
+        ]
+
+
+async def handle_wire_module(arguments: dict[str, Any]) -> list[TextContent]:
+    """Wire a module's router and exception handlers."""
+    module_name = arguments["module_name"]
+    project_path = _resolve_project_path(arguments)
+
+    try:
+        wirer = ModuleWirer(
+            module_name=module_name,
+            project_path=project_path,
+        )
+        result = wirer.wire()
+        return [TextContent(type="text", text=json.dumps(result))]
+
+    except Exception as e:
+        logger.error(f"Error wiring module: {e}", exc_info=True)
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"success": False, "error": str(e)}),
+            )
+        ]
 
 
 async def handle_generate_builtin(arguments: dict[str, Any]) -> list[TextContent]:
     """Copy a built-in module into the project."""
     app_name = arguments["app_name"]
-    project_path = arguments.get("project_path", "generated_project")
+    project_path = _resolve_project_path(arguments)
 
     from hexagon_generator.core import constant
 
@@ -225,14 +389,14 @@ async def handle_generate_builtin(arguments: dict[str, Any]) -> list[TextContent
                 "message": f"Built-in module '{app_name}' already exists at {target_path}, skipped",
             }
 
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result))]
 
     except Exception as e:
         logger.error(f"Error copying built-in app: {e}", exc_info=True)
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"success": False, "error": str(e)}, indent=2),
+                text=json.dumps({"success": False, "error": str(e)}),
             )
         ]
 
@@ -243,23 +407,22 @@ async def handle_generate_builtin(arguments: dict[str, Any]) -> list[TextContent
 async def handle_list_todos(arguments: dict[str, Any]) -> list[TextContent]:
     """List all TODOs in a module."""
     module_name = arguments["module_name"]
-    project_path = arguments.get("project_path", "generated_project")
+    project_path = _resolve_project_path(arguments)
 
     try:
-        # Dynamically scan module directory for TODOs
         module_path = Path(project_path) / "src" / module_name
         result = scan_module_todos(module_path)
 
         result["project_path"] = project_path
 
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result))]
 
     except Exception as e:
         logger.error(f"Error listing TODOs: {e}", exc_info=True)
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"success": False, "error": str(e)}, indent=2),
+                text=json.dumps({"success": False, "error": str(e)}),
             )
         ]
 
@@ -268,19 +431,20 @@ async def handle_complete_todos(arguments: dict[str, Any]) -> list[TextContent]:
     """Complete TODOs in a specific file."""
     file_path = Path(arguments["file_path"])
     context = arguments.get("context", "")
+    action = arguments.get("action", "remove")
 
     try:
         completer = TodoCompleter()
-        result = await completer.complete_file_todos(file_path, context)
+        result = await completer.complete_file_todos(file_path, context, action=action)
 
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result))]
 
     except Exception as e:
         logger.error(f"Error completing TODOs: {e}", exc_info=True)
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"success": False, "error": str(e)}, indent=2),
+                text=json.dumps({"success": False, "error": str(e)}),
             )
         ]
 

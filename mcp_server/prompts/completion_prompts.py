@@ -1,206 +1,118 @@
-"""Specialized prompts for completing TODOs in different file types."""
+"""Structured guidelines for completing TODOs in different file types."""
 
 from typing import Any
 
 
-# Base architecture guidelines (shared across all prompts)
-BASE_GUIDELINES = {
-    "domain_dto": "Pure dataclasses, no external deps, Python built-in types only",
-    "domain_model": "SQLAlchemy 2.0 with Mapped[] types, id/created_at/updated_at required",
-    "schema": "Pydantic v2, Field() for validation, separate Request/Response schemas",
-    "repository": "SQLAlchemy 2.0 select(), handle DTOs not schemas",
-    "use_case": "Business logic, use UnitOfWork, mappers between layers",
+LAYER_RULES = {
+    "domain": {
+        "allowed_imports": ["dataclasses", "datetime", "typing", "abc"],
+        "forbidden_imports": ["sqlalchemy", "pydantic", "fastapi"],
+        "principle": "Pure domain logic. No external dependencies.",
+    },
+    "application": {
+        "allowed_imports": ["domain.*", "pydantic"],
+        "forbidden_imports": ["sqlalchemy", "fastapi", "infrastructure.*"],
+        "principle": "Business logic and orchestration. Use UnitOfWork for transactions.",
+    },
+    "infrastructure": {
+        "allowed_imports": ["domain.*", "application.*", "sqlalchemy", "fastapi"],
+        "forbidden_imports": [],
+        "principle": "Technical implementation details. Adapters to external systems.",
+    },
 }
 
 
-def _get_file_context(file_content: str, todos: list[dict[str, Any]]) -> str:
-    """Extract only relevant context around TODOs instead of full file.
+TODO_GUIDELINES = {
+    # Use case business logic TODOs
+    "create": {
+        "category": "business_logic",
+        "guideline": "Add pre-creation validation and data transformations.",
+        "suggestion": "Validate uniqueness, normalize data, check business rules before persisting.",
+    },
+    "update": {
+        "category": "business_logic",
+        "guideline": "Add pre-update validation and authorization.",
+        "suggestion": "Validate field constraints, check ownership/permissions, apply business rules.",
+    },
+    "list": {
+        "category": "business_logic",
+        "guideline": "Add filtering logic and authorization.",
+        "suggestion": "Apply role-based filtering, scope queries, validate filter params.",
+    },
+    "retrieve": {
+        "category": "business_logic",
+        "guideline": "Add authorization and data enrichment.",
+        "suggestion": "Check access permissions, enrich with related data if needed.",
+    },
+    "delete": {
+        "category": "business_logic",
+        "guideline": "Add authorization and cascading logic.",
+        "suggestion": "Check permissions, handle dependent records, soft-delete if applicable.",
+    },
+}
 
-    Args:
-        file_content: Full file content
-        todos: List of TODO items
+# TODOs that are handled by define_fields or wire_module, not complete_todos
+DELEGATED_TODOS = {
+    "Add your domain fields here": "define_fields",
+    "Add your fields here": "define_fields",
+    "Add your fields here (all Optional)": "define_fields",
+    "Add your model columns here": "define_fields",
+    "Add your model fields here": "define_fields",
+    "Add example data": "define_fields",
+    "Add fields that can be updated": "define_fields",
+    "Add your fields": "define_fields",
+    "Add main fields for list view": "define_fields",
+    "Add specific filters for your model": "define_fields",
+    "Map your fields here": "define_fields",
+    "Customize search fields based on your model": "define_fields",
+    "Apply custom filters": "define_fields",
+    "Register your module routers here": "wire_module",
+    "Import your module exception mappings here": "wire_module",
+    "Append your module exception mappings here": "wire_module",
+}
 
-    Returns:
-        Minimal context string
+
+def get_file_context(file_content: str, todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract structured context around each TODO.
+
+    Returns a list of context dicts with before/after lines for each TODO.
     """
     lines = file_content.split("\n")
-    context_lines = []
+    contexts = []
 
     for todo in todos:
         line_num = todo["line_number"] - 1  # 0-indexed
-        start = max(0, line_num - 3)  # 3 lines before
-        end = min(len(lines), line_num + 3)  # 3 lines after
+        start = max(0, line_num - 3)
+        end = min(len(lines), line_num + 4)
 
-        context_lines.append(f"--- Line {todo['line_number']} ---")
-        context_lines.extend(lines[start:end])
+        contexts.append({
+            "line_number": todo["line_number"],
+            "todo_text": todo["content"],
+            "before": lines[start:line_num],
+            "after": lines[line_num + 1 : end],
+        })
 
-    return "\n".join(context_lines)
-
-
-def get_domain_dto_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing Domain DTOs."""
-    entity_name = file_path.split("/")[-2]  # Extract module name
-
-    return f"""Complete {len(todos)} TODO(s) in Domain DTO: {entity_name}
-Context: {context or 'N/A'}
-Rules: {BASE_GUIDELINES['domain_dto']}
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed field definitions (not full file)."""
+    return contexts
 
 
-def get_domain_model_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing Domain Models (SQLAlchemy)."""
-    entity_name = file_path.split("/")[-2]
-
-    return f"""Complete {len(todos)} TODO(s) in Domain Model: {entity_name}
-Context: {context or 'N/A'}
-Rules: {BASE_GUIDELINES['domain_model']}
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed column definitions using Mapped[] syntax."""
-
-
-def get_schema_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing Pydantic Schemas."""
-    entity_name = file_path.split("/")[-2]
-
-    return f"""Complete {len(todos)} TODO(s) in Pydantic Schema: {entity_name}
-Context: {context or 'N/A'}
-Rules: {BASE_GUIDELINES['schema']}
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed field definitions with Field() validations."""
-
-
-def get_repository_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing Repository implementations."""
-    entity_name = file_path.split("/")[-2]
-
-    return f"""Complete {len(todos)} TODO(s) in Repository: {entity_name}
-Context: {context or 'N/A'}
-Rules: {BASE_GUIDELINES['repository']}
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed implementation code (filters, queries, etc.)."""
-
-
-def get_use_case_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing Use Case implementations."""
-    entity_name = file_path.split("/")[-2]
-
-    return f"""Complete {len(todos)} TODO(s) in Use Case: {entity_name}
-Context: {context or 'N/A'}
-Rules: {BASE_GUIDELINES['use_case']}
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed business logic (validations, error handling, etc.)."""
-
-
-def get_router_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing router registration."""
-    return f"""Complete {len(todos)} TODO(s) in the API router: src/common/router.py
-Context: {context or 'N/A'}
-Rules: Import the router from the module's infrastructure/web.py and include it in api_router.
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed import and include_router lines."""
-
-
-def get_exceptions_mapping_prompt(
-    file_path: str, file_content: str, context: str, todos: list[dict[str, Any]]
-) -> str:
-    """Generate prompt for completing exception handler registration."""
-    return f"""Complete {len(todos)} TODO(s) in the exceptions mapping: src/common/exceptions_mapping.py
-Context: {context or 'N/A'}
-Rules: Import the module's EXCEPTIONS_<MODULE>_MAPPING from infrastructure/exception_handlers.py and append it to ALL_EXCEPTIONS.
-
-TODOs:
-{_format_todos(todos)}
-
-Code context:
-```python
-{_get_file_context(file_content, todos)}
-```
-
-Delete any existing TODO comments after completion.
-Return ONLY the completed import and ALL_EXCEPTIONS append lines."""
-
-
-def _format_todos(todos: list[dict[str, Any]]) -> str:
-    """Format TODO list for display in prompt.
+def get_todo_guidelines(file_type: str) -> dict[str, Any]:
+    """Get structured guidelines for a file type.
 
     Args:
-        todos: List of TODO items
+        file_type: File stem (e.g., 'create', 'update', 'entities')
 
     Returns:
-        Formatted string
+        Dict with category, guideline, and suggestion. Empty dict if not applicable.
     """
-    if not todos:
-        return "No TODOs found"
+    return TODO_GUIDELINES.get(file_type, {})
 
-    formatted = []
-    for i, todo in enumerate(todos, 1):
-        formatted.append(f"{i}. Line {todo['line_number']}: {todo['content']}")
 
-    return "\n".join(formatted)
+def is_delegated_todo(todo_content: str) -> str | None:
+    """Check if a TODO should be handled by another tool.
+
+    Returns the tool name if delegated, None otherwise.
+    """
+    for marker, tool in DELEGATED_TODOS.items():
+        if marker in todo_content:
+            return tool
+    return None

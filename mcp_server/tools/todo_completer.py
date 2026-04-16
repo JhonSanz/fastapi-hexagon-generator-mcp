@@ -1,4 +1,4 @@
-"""Tool to intelligently complete TODO comments in generated code."""
+"""Tool to scan and provide structured guidance for completing TODO comments."""
 
 import re
 from collections import Counter
@@ -6,13 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from ..prompts.completion_prompts import (
-    get_domain_dto_prompt,
-    get_domain_model_prompt,
-    get_exceptions_mapping_prompt,
-    get_router_prompt,
-    get_schema_prompt,
-    get_repository_prompt,
-    get_use_case_prompt,
+    LAYER_RULES,
+    get_file_context,
+    get_todo_guidelines,
+    is_delegated_todo,
 )
 
 TODO_PATTERN = re.compile(r'#\s*TODO:?\s*(.+)', re.IGNORECASE)
@@ -84,7 +81,7 @@ def scan_module_todos(module_path: Path) -> dict[str, Any]:
         module_path: Absolute path to the module directory (e.g. .../src/school)
 
     Returns:
-        Dictionary with todos and summary, same shape as the old static list.
+        Dictionary with todos and summary, same shape as before.
     """
     if not module_path.is_dir():
         return {
@@ -96,14 +93,11 @@ def scan_module_todos(module_path: Path) -> dict[str, Any]:
     category_counter: Counter = Counter()
     file_type_counter: Counter = Counter()
 
-    # src/ is the parent of the module directory
     src_path = module_path.parent
-    rel_base = src_path.parent  # project root, so paths show as src/...
+    rel_base = src_path.parent
 
-    # Scan the module itself
     _scan_directory_todos(module_path, rel_base, todos, category_counter, file_type_counter)
 
-    # Scan src/common/ for wiring TODOs (router, exceptions_mapping, etc.)
     common_path = src_path / "common"
     _scan_directory_todos(common_path, rel_base, todos, category_counter, file_type_counter)
 
@@ -123,93 +117,118 @@ def scan_module_todos(module_path: Path) -> dict[str, Any]:
 
 
 class TodoCompleter:
-    """Intelligently completes TODO comments while respecting hexagonal architecture."""
+    """Completes TODO comments by removing them or providing guidance."""
 
-    def __init__(self):
-        """Initialize the completer."""
-        self.prompt_map = {
-            # Domain layer
-            "entities": get_domain_dto_prompt,
-            # Application layer
-            "schemas": get_schema_prompt,
-            "create": get_use_case_prompt,
-            "update": get_use_case_prompt,
-            "list": get_use_case_prompt,
-            "retrieve": get_use_case_prompt,
-            "delete": get_use_case_prompt,
-            # Infrastructure layer
-            "models": get_domain_model_prompt,
-            "database": get_repository_prompt,
-            # Common wiring
-            "router": get_router_prompt,
-            "exceptions_mapping": get_exceptions_mapping_prompt,
-        }
-
-    async def complete_file_todos(
+    def _remove_todos_from_file(
         self,
         file_path: Path,
-        context: str = ""
     ) -> dict[str, Any]:
-        """Complete TODOs in a specific file.
+        """Remove actionable TODO comments and their trailing blank lines from a file.
 
-        Args:
-            file_path: Path to the file containing TODOs
-            context: Additional context about the domain
+        Skips TODOs delegated to define_fields or wire_module.
 
         Returns:
-            Result dictionary with suggestions and metadata
+            Result dictionary with count of removed TODOs.
         """
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
+        content = file_path.read_text(encoding="utf-8")
+        lines = content.split("\n")
 
-        # Read the file content
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        all_todos = _extract_todos_from_file(file_path)
+        if not all_todos:
+            return {"success": True, "file_path": str(file_path), "todos_removed": 0}
 
-        # Determine file type
+        # Collect line indices to remove (0-based)
+        remove_indices: set[int] = set()
+        for todo in all_todos:
+            if is_delegated_todo(todo["content"]):
+                continue
+            idx = todo["line_number"] - 1
+            remove_indices.add(idx)
+            # Also remove the blank line immediately after, if present
+            next_idx = idx + 1
+            if next_idx < len(lines) and lines[next_idx].strip() == "":
+                remove_indices.add(next_idx)
+
+        if not remove_indices:
+            return {"success": True, "file_path": str(file_path), "todos_removed": 0}
+
+        new_lines = [line for i, line in enumerate(lines) if i not in remove_indices]
+        file_path.write_text("\n".join(new_lines), encoding="utf-8")
+
+        return {
+            "success": True,
+            "file_path": str(file_path),
+            "todos_removed": len([i for i in remove_indices if i < len(lines) and TODO_PATTERN.search(lines[i])]),
+        }
+
+    def _guidance_for_todos(
+        self,
+        file_path: Path,
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Return structured guidance for actionable TODOs (original behavior)."""
+        content = file_path.read_text(encoding="utf-8")
         file_type = file_path.stem
         category = _determine_category(file_path)
 
-        # Get appropriate prompt
-        prompt_func = self.prompt_map.get(file_type)
-        if not prompt_func:
-            return {
-                "success": False,
-                "error": f"No completion prompt defined for file type: {file_type}"
-            }
+        all_todos = _extract_todos_from_file(file_path)
+        if not all_todos:
+            return {"success": True, "file_path": str(file_path), "todos_found": 0}
 
-        # Extract TODOs
-        todos = _extract_todos_from_file(file_path)
+        actionable_todos = []
+        delegated_count = 0
+        for todo in all_todos:
+            if is_delegated_todo(todo["content"]):
+                delegated_count += 1
+            else:
+                actionable_todos.append(todo)
 
-        if not todos:
-            return {
-                "success": True,
-                "file_path": str(file_path),
-                "message": "No TODOs found in this file",
-                "todos_found": 0
-            }
+        todo_contexts = get_file_context(content, actionable_todos) if actionable_todos else []
+        guidelines = get_todo_guidelines(file_type)
 
-        # Generate prompt for LLM
-        completion_prompt = prompt_func(
-            file_path=str(file_path),
-            file_content=content,
-            context=context,
-            todos=todos
-        )
+        replacements = []
+        for todo, ctx in zip(actionable_todos, todo_contexts):
+            replacements.append({
+                "line": todo["line_number"],
+                "todo": todo["content"],
+                "before": ctx["before"],
+                "after": ctx["after"],
+                "guideline": guidelines.get("guideline", ""),
+            })
 
-        result = {
+        result: dict[str, Any] = {
             "success": True,
             "file_path": str(file_path),
             "file_type": file_type,
             "category": category,
-            "todos_found": len(todos),
-            "todos": todos,
-            "completion_prompt": completion_prompt,
-            "instructions": (
-                "Use the completion_prompt to guide the LLM in completing the TODOs. "
-                "The LLM should analyze the file, understand the hexagonal architecture layer, "
-                "and provide appropriate implementations that follow best practices."
-            )
+            "actionable": len(actionable_todos),
+            "delegated": delegated_count,
+            "replacements": replacements,
+            "layer_rules": LAYER_RULES.get(category, {}),
         }
-
+        if context:
+            result["context"] = context
         return result
+
+    async def complete_file_todos(
+        self,
+        file_path: Path,
+        context: str = "",
+        action: str = "remove",
+    ) -> dict[str, Any]:
+        """Complete TODOs in a file.
+
+        Args:
+            file_path: Path to the file containing TODOs
+            context: Additional context about the domain
+            action: "remove" to delete TODO comments, "guidance" for suggestions
+
+        Returns:
+            Result dictionary
+        """
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        if action == "remove":
+            return self._remove_todos_from_file(file_path)
+        return self._guidance_for_todos(file_path, context)
