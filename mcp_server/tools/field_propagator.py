@@ -2,17 +2,13 @@
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 RESERVED_NAMES = {"id", "created_at", "updated_at"}
-
-ALLOWED_TYPES = {
-    "str", "int", "float", "bool", "datetime", "date", "Decimal",
-}
 
 # Python type -> (SQLAlchemy type constructor, extra imports needed)
 SQLALCHEMY_TYPE_MAP = {
@@ -25,16 +21,7 @@ SQLALCHEMY_TYPE_MAP = {
     "Decimal": ("Numeric", "Numeric"),
 }
 
-# Python type -> default Pydantic Field kwargs
-PYDANTIC_DEFAULTS = {
-    "str": {"min_length": 1},
-    "int": {},
-    "float": {},
-    "bool": {},
-    "datetime": {},
-    "date": {},
-    "Decimal": {},
-}
+KNOWN_TYPES = set(SQLALCHEMY_TYPE_MAP.keys())
 
 
 @dataclass
@@ -56,10 +43,10 @@ class FieldDefinition:
     def __post_init__(self):
         if self.name in RESERVED_NAMES:
             raise ValueError(f"Field name '{self.name}' is reserved (used by base template)")
-        if self.type not in ALLOWED_TYPES:
-            raise ValueError(
-                f"Field type '{self.type}' not allowed. Use: {', '.join(sorted(ALLOWED_TYPES))}"
-            )
+
+    @property
+    def is_known_type(self) -> bool:
+        return self.type in KNOWN_TYPES
 
 
 def _find_todo_block(lines: list[str], todo_substring: str) -> tuple[int, int]:
@@ -145,9 +132,9 @@ class FieldPropagator:
 
     def _entity_field(self, f: FieldDefinition, optional_all: bool = False) -> str:
         """Generate a dataclass field line."""
+        if not f.is_known_type:
+            return f"{f.name}: ...  # TODO: Define type for '{f.type}' field"
         py_type = f.type
-        if py_type == "datetime":
-            py_type = "datetime"
         if f.nullable or optional_all:
             return f"{f.name}: Optional[{py_type}] = None"
         return f"{f.name}: {py_type}"
@@ -161,14 +148,15 @@ class FieldPropagator:
         content = path.read_text(encoding="utf-8")
         replaced_count = 0
 
-        # Main entity fields
-        main_fields = [self._entity_field(f) for f in self.fields]
+        # Main entity fields (required first, then nullable — avoids dataclass TypeError)
+        sorted_fields = sorted(self.fields, key=lambda f: f.nullable)
+        main_fields = [self._entity_field(f) for f in sorted_fields]
         content, ok = _replace_todo_block(content, "Add your domain fields here", main_fields)
         if ok:
             replaced_count += 1
 
-        # CreateData fields
-        create_fields = [self._entity_field(f) for f in self.fields]
+        # CreateData fields (same ordering)
+        create_fields = [self._entity_field(f) for f in sorted_fields]
         content, ok = _replace_todo_block(content, "Add your fields here", create_fields)
         if ok:
             replaced_count += 1
@@ -192,6 +180,9 @@ class FieldPropagator:
 
     def _model_column(self, f: FieldDefinition) -> str:
         """Generate a SQLAlchemy mapped_column line."""
+        if not f.is_known_type:
+            return f"# TODO: Define column for '{f.name}' (type: {f.type})"
+
         sa_type_expr, _ = SQLALCHEMY_TYPE_MAP[f.type]
 
         # String with max_length
@@ -227,9 +218,11 @@ class FieldPropagator:
         content, ok = _replace_todo_block(content, "Add your model columns here", columns)
 
         if ok:
-            # Add missing SQLAlchemy imports
+            # Add missing SQLAlchemy imports (skip custom types)
             needed_types = set()
             for f in self.fields:
+                if not f.is_known_type:
+                    continue
                 _, import_name = SQLALCHEMY_TYPE_MAP[f.type]
                 needed_types.add(import_name)
                 if f.type == "str" and not f.max_length:
@@ -250,6 +243,9 @@ class FieldPropagator:
 
     def _schema_field(self, f: FieldDefinition, optional: bool = False) -> str:
         """Generate a Pydantic Field() line."""
+        if not f.is_known_type:
+            return f"# TODO: Define schema field for '{f.name}' (type: {f.type})"
+
         py_type = f.type
         if py_type == "datetime":
             py_type = "datetime"
@@ -285,6 +281,9 @@ class FieldPropagator:
 
     def _schema_example_value(self, f: FieldDefinition) -> str:
         """Generate an example value for json_schema_extra."""
+        if not f.is_known_type:
+            return f'# TODO: Add example for \'{f.name}\' (type: {f.type})'
+
         examples = {
             "str": f'"Example {f.name}"',
             "int": "1",
@@ -465,8 +464,9 @@ class FieldPropagator:
             total_replaced += count
 
         files_modified = [r["file"] for r in results if r["modified"]]
+        custom_fields = [f.name for f in self.fields if not f.is_known_type]
 
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "module": self.snake_name,
             "fields_defined": len(self.fields),
@@ -474,3 +474,10 @@ class FieldPropagator:
             "todos_completed": total_replaced,
             "details": results,
         }
+        if custom_fields:
+            result["custom_fields_as_todo"] = custom_fields
+            result["custom_hint"] = (
+                f"Fields {custom_fields} have unknown types and were placed as TODOs. "
+                "Use complete_todos with action='guidance' or edit manually."
+            )
+        return result

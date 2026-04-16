@@ -16,6 +16,7 @@ from hexagon_generator.utils.validators import normalize_name
 from .tools.todo_completer import TodoCompleter, scan_module_todos
 from .tools.field_propagator import FieldPropagator
 from .tools.module_wirer import ModuleWirer
+from .tools.relationship_builder import RelationshipBuilder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,8 +82,7 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "type": {
                                     "type": "string",
-                                    "description": "Python type: str, int, float, bool, datetime, date, Decimal",
-                                    "enum": ["str", "int", "float", "bool", "datetime", "date", "Decimal"],
+                                    "description": "Python type. Built-in supported: str, int, float, bool, datetime, date, Decimal. Any other type (e.g., UUID, dict, list) will be placed as a TODO for manual completion.",
                                 },
                                 "max_length": {
                                     "type": "integer",
@@ -136,6 +136,43 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["module_name", "project_path"],
+            },
+        ),
+        Tool(
+            name="add_relationship",
+            description=(
+                "Add a relationship between two existing modules. "
+                "Generates ForeignKey columns, relationship() declarations in ORM models, "
+                "FK fields in domain entities, and mapper updates. "
+                "Schemas are left as TODOs for the LLM to decide nesting strategy. "
+                "Both modules must already exist (run generate_crud + define_fields first)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_module": {
+                        "type": "string",
+                        "description": "The 'one' side or owner module (e.g., 'store' in store-has-many-products)",
+                    },
+                    "target_module": {
+                        "type": "string",
+                        "description": "The 'many' side or owned module (e.g., 'product' in store-has-many-products)",
+                    },
+                    "relation_type": {
+                        "type": "string",
+                        "enum": ["one_to_many", "many_to_many", "one_to_one"],
+                        "description": "Type of relationship: one_to_many (FK on target), many_to_many (association table), one_to_one (FK+unique on target)",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Absolute path to the FastAPI project directory",
+                    },
+                    "nullable": {
+                        "type": "boolean",
+                        "description": "Whether the FK allows null (default: false). Only applies to one_to_many and one_to_one.",
+                    },
+                },
+                "required": ["source_module", "target_module", "relation_type", "project_path"],
             },
         ),
         Tool(
@@ -245,6 +282,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             "generate_crud": handle_generate_crud,
             "define_fields": handle_define_fields,
             "wire_module": handle_wire_module,
+            "add_relationship": handle_add_relationship,
             "list_todos": handle_list_todos,
             "complete_todos": handle_complete_todos,
             "generate_builtin": handle_generate_builtin,
@@ -347,6 +385,35 @@ async def handle_wire_module(arguments: dict[str, Any]) -> list[TextContent]:
 
     except Exception as e:
         logger.error(f"Error wiring module: {e}", exc_info=True)
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"success": False, "error": str(e)}),
+            )
+        ]
+
+
+async def handle_add_relationship(arguments: dict[str, Any]) -> list[TextContent]:
+    """Add a relationship between two modules."""
+    source_module = arguments["source_module"]
+    target_module = arguments["target_module"]
+    relation_type = arguments["relation_type"]
+    project_path = _resolve_project_path(arguments)
+    nullable = arguments.get("nullable", False)
+
+    try:
+        builder = RelationshipBuilder(
+            source_module=source_module,
+            target_module=target_module,
+            relation_type=relation_type,
+            project_path=project_path,
+            nullable=nullable,
+        )
+        result = builder.build()
+        return [TextContent(type="text", text=json.dumps(result))]
+
+    except Exception as e:
+        logger.error(f"Error adding relationship: {e}", exc_info=True)
         return [
             TextContent(
                 type="text",
