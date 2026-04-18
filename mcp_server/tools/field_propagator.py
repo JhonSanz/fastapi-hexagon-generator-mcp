@@ -115,37 +115,6 @@ def _find_class_bounds(lines: list[str], class_name: str) -> tuple[int, int]:
     return start, end
 
 
-def _append_to_class(content: str, class_name: str, new_lines: list[str]) -> str:
-    """Append lines at the end of a class body, before any trailing blank lines
-    and before the next class. Drops a trailing ``pass`` if present.
-    """
-    if not new_lines:
-        return content
-    lines = content.split("\n")
-    start, end = _find_class_bounds(lines, class_name)
-    if start == -1:
-        return content
-
-    insert_at = end
-    while insert_at > start + 1 and lines[insert_at - 1].strip() == "":
-        insert_at -= 1
-    if insert_at > start + 1 and lines[insert_at - 1].strip() == "pass":
-        lines.pop(insert_at - 1)
-        insert_at -= 1
-
-    indent = "    "
-    for k in range(start + 1, insert_at):
-        stripped = lines[k].strip()
-        if stripped and not stripped.startswith(('"""', "#")):
-            ws = lines[k][: len(lines[k]) - len(lines[k].lstrip())]
-            if ws:
-                indent = ws
-                break
-
-    indented = [f"{indent}{l}" for l in new_lines]
-    return "\n".join(lines[:insert_at] + indented + lines[insert_at:])
-
-
 class FieldPropagator:
     """Propagates field definitions to all hexagonal layers."""
 
@@ -206,10 +175,6 @@ class FieldPropagator:
         content, ok = _replace_todo_block(content, "Add your domain fields here", main_required)
         if ok:
             replaced_count += 1
-
-        if nullable_fields:
-            nullable_lines = [self._entity_field(f) for f in nullable_fields]
-            content = _append_to_class(content, self.pascal_name, nullable_lines)
 
         # CreateData: required first, nullable last (no trailing non-default → safe)
         sorted_fields = sorted(self.fields, key=lambda f: f.nullable)
