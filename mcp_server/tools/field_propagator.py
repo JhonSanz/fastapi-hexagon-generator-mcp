@@ -98,6 +98,54 @@ def _replace_todo_block(
     return "\n".join(new_lines), True
 
 
+def _find_class_bounds(lines: list[str], class_name: str) -> tuple[int, int]:
+    """Return (start, end_exclusive) line indices for a class definition."""
+    start = -1
+    for i, line in enumerate(lines):
+        if re.match(rf"^class\s+{re.escape(class_name)}\b", line):
+            start = i
+            break
+    if start == -1:
+        return -1, -1
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if re.match(r"^class\s+\w+", lines[j]):
+            end = j
+            break
+    return start, end
+
+
+def _append_to_class(content: str, class_name: str, new_lines: list[str]) -> str:
+    """Append lines at the end of a class body, before any trailing blank lines
+    and before the next class. Drops a trailing ``pass`` if present.
+    """
+    if not new_lines:
+        return content
+    lines = content.split("\n")
+    start, end = _find_class_bounds(lines, class_name)
+    if start == -1:
+        return content
+
+    insert_at = end
+    while insert_at > start + 1 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    if insert_at > start + 1 and lines[insert_at - 1].strip() == "pass":
+        lines.pop(insert_at - 1)
+        insert_at -= 1
+
+    indent = "    "
+    for k in range(start + 1, insert_at):
+        stripped = lines[k].strip()
+        if stripped and not stripped.startswith(('"""', "#")):
+            ws = lines[k][: len(lines[k]) - len(lines[k].lstrip())]
+            if ws:
+                indent = ws
+                break
+
+    indented = [f"{indent}{l}" for l in new_lines]
+    return "\n".join(lines[:insert_at] + indented + lines[insert_at:])
+
+
 class FieldPropagator:
     """Propagates field definitions to all hexagonal layers."""
 
@@ -148,14 +196,23 @@ class FieldPropagator:
         content = path.read_text(encoding="utf-8")
         replaced_count = 0
 
-        # Main entity fields (required first, then nullable — avoids dataclass TypeError)
-        sorted_fields = sorted(self.fields, key=lambda f: f.nullable)
-        main_fields = [self._entity_field(f) for f in sorted_fields]
-        content, ok = _replace_todo_block(content, "Add your domain fields here", main_fields)
+        # Main entity: required fields go in the TODO block; nullable fields are
+        # appended AFTER the class (after created_at/updated_at) to respect
+        # dataclass ordering — the template has non-default fields after the TODO.
+        required_fields = [f for f in self.fields if not f.nullable]
+        nullable_fields = [f for f in self.fields if f.nullable]
+
+        main_required = [self._entity_field(f) for f in required_fields]
+        content, ok = _replace_todo_block(content, "Add your domain fields here", main_required)
         if ok:
             replaced_count += 1
 
-        # CreateData fields (same ordering)
+        if nullable_fields:
+            nullable_lines = [self._entity_field(f) for f in nullable_fields]
+            content = _append_to_class(content, self.pascal_name, nullable_lines)
+
+        # CreateData: required first, nullable last (no trailing non-default → safe)
+        sorted_fields = sorted(self.fields, key=lambda f: f.nullable)
         create_fields = [self._entity_field(f) for f in sorted_fields]
         content, ok = _replace_todo_block(content, "Add your fields here", create_fields)
         if ok:

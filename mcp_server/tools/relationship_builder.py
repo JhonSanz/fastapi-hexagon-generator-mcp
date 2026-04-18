@@ -44,7 +44,12 @@ def _insert_before(content: str, marker: str, new_lines: list[str]) -> tuple[str
 
 
 def _insert_after(content: str, marker: str, new_lines: list[str]) -> tuple[str, bool]:
-    """Insert lines after the **last** line containing *marker*, matching its indent."""
+    """Insert lines after the **last** statement containing *marker*.
+
+    Handles multi-line statements by tracking parenthesis depth:
+    if the matched line has an unclosed ``(``, scanning continues
+    until the parentheses are balanced.
+    """
     lines = content.split("\n")
     last = -1
     for i, line in enumerate(lines):
@@ -52,9 +57,19 @@ def _insert_after(content: str, marker: str, new_lines: list[str]) -> tuple[str,
             last = i
     if last == -1:
         return content, False
+
+    # Walk forward until parentheses are balanced
+    end = last
+    depth = 0
+    for i in range(last, len(lines)):
+        depth += lines[i].count("(") - lines[i].count(")")
+        end = i
+        if depth <= 0:
+            break
+
     indent = lines[last][: len(lines[last]) - len(lines[last].lstrip())]
     indented = [f"{indent}{l}" if l.strip() else "" for l in new_lines]
-    return "\n".join(lines[: last + 1] + indented + lines[last + 1 :]), True
+    return "\n".join(lines[: end + 1] + indented + lines[end + 1 :]), True
 
 
 # ── Import helpers ───────────────────────────────────────────────
@@ -90,6 +105,125 @@ def _add_to_orm_import(content: str, *names: str) -> str:
         + f"from sqlalchemy.orm import {', '.join(all_names)}"
         + content[match.end() :]
     )
+
+
+# ── Class-scoped helpers (shared by entity + schema insertions) ──
+
+
+def _find_class(lines: list[str], class_name: str) -> tuple[int, int]:
+    """Return (start, end_exclusive) for a class definition."""
+    start = -1
+    for i, line in enumerate(lines):
+        if re.match(rf"^class\s+{re.escape(class_name)}\b", line):
+            start = i
+            break
+    if start == -1:
+        return -1, -1
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if re.match(r"^class\s+\w+", lines[j]):
+            end = j
+            break
+    return start, end
+
+
+def _append_to_class_body(content: str, class_name: str, line: str) -> tuple[str, bool]:
+    """Append a single line at the end of a class body, dropping trailing ``pass``
+    and preserving trailing blank separation before the next class.
+    """
+    lines = content.split("\n")
+    start, end = _find_class(lines, class_name)
+    if start == -1:
+        return content, False
+
+    insert_at = end
+    while insert_at > start + 1 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    if insert_at > start + 1 and lines[insert_at - 1].strip() == "pass":
+        lines.pop(insert_at - 1)
+        insert_at -= 1
+
+    lines.insert(insert_at, f"    {line}")
+    return "\n".join(lines), True
+
+
+def _insert_before_model_config(content: str, class_name: str, line: str) -> tuple[str, bool]:
+    """Insert a line inside a class, right before its ``model_config = ConfigDict(``."""
+    lines = content.split("\n")
+    start, end = _find_class(lines, class_name)
+    if start == -1:
+        return content, False
+    for i in range(start + 1, end):
+        if "model_config = ConfigDict" in lines[i]:
+            j = i
+            while j > start + 1 and lines[j - 1].strip() == "":
+                j -= 1
+            lines.insert(j, f"    {line}")
+            return "\n".join(lines), True
+    return content, False
+
+
+def _insert_before_next_class(content: str, class_name: str, line: str) -> tuple[str, bool]:
+    """Insert a line at the end of a class, just before the next class definition."""
+    lines = content.split("\n")
+    start, end = _find_class(lines, class_name)
+    if start == -1:
+        return content, False
+
+    insert_at = end
+    while insert_at > start + 1 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    if insert_at > start + 1 and lines[insert_at - 1].strip() == "pass":
+        lines.pop(insert_at - 1)
+        insert_at -= 1
+
+    lines.insert(insert_at, f"    {line}")
+    return "\n".join(lines), True
+
+
+def _insert_in_example(content: str, class_name: str, example_entry: str) -> tuple[str, bool]:
+    """Insert an example entry (e.g. ``"store_id": 1,``) into the ``"example": {...}``
+    dict of a class's ``model_config``. Adds a trailing comma to the previous
+    entry if missing. Returns (new_content, inserted)."""
+    lines = content.split("\n")
+    start, end = _find_class(lines, class_name)
+    if start == -1:
+        return content, False
+
+    example_start = -1
+    for i in range(start + 1, end):
+        if '"example":' in lines[i] and "{" in lines[i]:
+            example_start = i
+            break
+    if example_start == -1:
+        return content, False
+
+    depth = lines[example_start].count("{") - lines[example_start].count("}")
+    close_idx = -1
+    for i in range(example_start + 1, end):
+        depth += lines[i].count("{") - lines[i].count("}")
+        if depth <= 0:
+            close_idx = i
+            break
+    if close_idx == -1:
+        return content, False
+
+    j = close_idx - 1
+    while j > example_start and lines[j].strip() == "":
+        j -= 1
+    if j > example_start and lines[j].strip() and not lines[j].rstrip().endswith(","):
+        lines[j] = lines[j].rstrip() + ","
+
+    indent = "                "
+    for k in range(example_start + 1, close_idx):
+        if lines[k].strip().startswith('"'):
+            ws = lines[k][: len(lines[k]) - len(lines[k].lstrip())]
+            if ws:
+                indent = ws
+                break
+
+    lines.insert(close_idx, f"{indent}{example_entry}")
+    return "\n".join(lines), True
 
 
 # ── Builder ──────────────────────────────────────────────────────
@@ -149,7 +283,7 @@ class RelationshipBuilder:
             f'ForeignKey("{fk_table}.id"), nullable={nullable_str}{unique_part})'
         )
 
-        content, ok = _insert_before(content, "created_at: Mapped", [fk_line])
+        content, ok = _insert_before(content, "created_at: Mapped", [fk_line, ""])
         content = _add_to_sqlalchemy_import(content, "ForeignKey")
 
         if ok:
@@ -197,7 +331,15 @@ class RelationshipBuilder:
         self._record(str(path), ok, f"Added {attr_name} relationship")
 
     def _add_fk_to_entity(self, entity_module: str, fk_name: str):
-        """Add FK field to the main domain entity (before created_at)."""
+        """Add FK field to the main domain entity, CreateData and UpdateData.
+
+        - Main entity: required FK goes before ``created_at``; nullable FK is
+          appended at the end of the class (after ``updated_at``) to avoid
+          dataclass TypeError (required-after-default).
+        - CreateData: appended at the end of the class (drops trailing ``pass``).
+        - UpdateData: always Optional, appended at the end.
+        """
+        target_pascal = self._to_pascal_for(entity_module)
         path = self._src(entity_module, "domain", "entities.py")
         if not path.exists():
             self._record(str(path), False, "File not found")
@@ -209,12 +351,88 @@ class RelationshipBuilder:
             self._record(str(path), False, f"{fk_name} already exists")
             return
 
-        field_line = f"{fk_name}: Optional[int] = None" if self.nullable else f"{fk_name}: int"
-        content, ok = _insert_before(content, "created_at: datetime", [field_line])
+        main_line = (
+            f"{fk_name}: Optional[int] = None" if self.nullable else f"{fk_name}: int"
+        )
 
-        if ok:
+        if self.nullable:
+            content, main_ok = _append_to_class_body(content, target_pascal, main_line)
+        else:
+            content, main_ok = _insert_before(content, "created_at: datetime", [main_line])
+
+        create_line = main_line
+        content, create_ok = _append_to_class_body(content, f"Create{target_pascal}Data", create_line)
+
+        update_line = f"{fk_name}: Optional[int] = None"
+        content, update_ok = _append_to_class_body(content, f"Update{target_pascal}Data", update_line)
+
+        if main_ok or create_ok or update_ok:
             path.write_text(content, encoding="utf-8")
-        self._record(str(path), ok, f"Added {fk_name} to entity")
+
+        parts = []
+        if main_ok:
+            parts.append("entity")
+        if create_ok:
+            parts.append(f"Create{target_pascal}Data")
+        if update_ok:
+            parts.append(f"Update{target_pascal}Data")
+        desc = f"Added {fk_name} to {', '.join(parts)}" if parts else f"Failed to add {fk_name}"
+        self._record(str(path), bool(parts), desc)
+
+    def _to_pascal_for(self, module: str) -> str:
+        return self.target_pascal if module == self.target_snake else self.source_pascal
+
+    def _add_fk_to_schemas(self, target_module: str, fk_name: str):
+        """Propagate FK to application/schemas.py.
+
+        Inserts the FK into <Pascal>Base, Update<Pascal>Request, and
+        <Pascal>ListResponse, plus the three json_schema_extra examples.
+        Nested relationship shape (embedding vs. ID-only) is intentionally
+        left to the LLM — this only wires the scalar FK column.
+        """
+        target_pascal = self._to_pascal_for(target_module)
+        path = self._src(target_module, "application", "schemas.py")
+        if not path.exists():
+            self._record(str(path), False, "File not found")
+            return
+
+        content = path.read_text(encoding="utf-8")
+
+        if f"{fk_name}:" in content:
+            self._record(str(path), False, f"{fk_name} already in schemas")
+            return
+
+        required_token = "None" if self.nullable else "..."
+        py_type = "Optional[int]" if self.nullable else "int"
+
+        base_line = f"{fk_name}: {py_type} = Field({required_token}, gt=0)"
+        content, base_ok = _insert_before_next_class(content, f"{target_pascal}Base", base_line)
+
+        update_line = f"{fk_name}: Optional[int] = Field(None, gt=0)"
+        content, update_ok = _insert_before_model_config(
+            content, f"Update{target_pascal}Request", update_line
+        )
+
+        list_line = f"{fk_name}: {py_type}"
+        content, list_ok = _insert_before_model_config(
+            content, f"{target_pascal}ListResponse", list_line
+        )
+
+        example_entry = f'"{fk_name}": 1,'
+        ex_results = []
+        for cls in (f"Create{target_pascal}Request", f"{target_pascal}Response", f"{target_pascal}ListResponse"):
+            content, ok = _insert_in_example(content, cls, example_entry)
+            ex_results.append(ok)
+
+        any_ok = base_ok or update_ok or list_ok or any(ex_results)
+        if any_ok:
+            path.write_text(content, encoding="utf-8")
+
+        self._record(
+            str(path),
+            any_ok,
+            f"Added {fk_name} to schemas (base={base_ok}, update={update_ok}, list={list_ok}, examples={sum(ex_results)}/3)",
+        )
 
     def _add_fk_to_mapper(self, mapper_module: str, fk_name: str):
         """Add FK field to the _to_entity mapper in database.py."""
@@ -256,9 +474,10 @@ class RelationshipBuilder:
             back_populates=self.source_snake, is_list=True,
         )
 
-        # Target entity + mapper
+        # Target entity + mapper + schemas
         self._add_fk_to_entity(self.target_snake, fk_name)
         self._add_fk_to_mapper(self.target_snake, fk_name)
+        self._add_fk_to_schemas(self.target_snake, fk_name)
 
     def _build_one_to_one(self):
         """Source has one target. FK on target side with unique constraint."""
@@ -277,9 +496,10 @@ class RelationshipBuilder:
             back_populates=self.source_snake, is_list=False, uselist=False,
         )
 
-        # Target entity + mapper
+        # Target entity + mapper + schemas
         self._add_fk_to_entity(self.target_snake, fk_name)
         self._add_fk_to_mapper(self.target_snake, fk_name)
+        self._add_fk_to_schemas(self.target_snake, fk_name)
 
     def _build_many_to_many(self):
         """Both sides have many. Creates association table."""
@@ -351,8 +571,7 @@ class RelationshipBuilder:
 
         remaining_todos = [
             "Configure cascade and lazy loading in relationship() declarations",
-            f"Update {self.target_pascal} schemas (Create/Update/Response) to include {self.source_snake}_id",
-            f"Update {self.source_pascal} Response schema if nested {plural_target} should be included",
+            f"Decide nested shape on {self.source_pascal}/{self.target_pascal} responses (embed object vs. ID-only)",
         ]
 
         return {
