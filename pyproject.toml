@@ -1,16 +1,47 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hexagonal-mcp-server"
+name = "fastapi-hexagon-mcp"
 version = "0.1.0"
 description = "MCP Server for generating FastAPI CRUD modules with hexagonal architecture"
+readme = "readme.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = [
-    "mcp>=0.1.0",
-    "hexagon-generator",
+authors = [
+    { name = "JhonSanz", email = "ingjhonsanz@gmail.com" },
 ]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "fastapi",
+    "hexagonal-architecture",
+    "code-generator",
+    "claude",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Framework :: FastAPI",
+]
+dependencies = [
+    "mcp>=1.0",
+    "fastapi-hexagon",
+]
+
+[project.urls]
+Homepage = "https://github.com/JhonSanz/fastapi-hexagon-generator-mcp"
+Repository = "https://github.com/JhonSanz/fastapi-hexagon-generator-mcp"
+Issues = "https://github.com/JhonSanz/fastapi-hexagon-generator-mcp/issues"
 
 [project.scripts]
 hexagonal-mcp = "mcp_server.server:main"
