@@ -1,36 +1,36 @@
 # debug.py en /home/finanzas/documents/hexagon/hexagonal-mcp-server/
 import asyncio
-from mcp_server.server import handle_list_todos, handle_define_fields 
+from mcp_server.server import handle_list_todos, handle_define_fields, handle_add_relationship
 
 async def main():
     result = await handle_define_fields({
         "module_name": "school",
         "project_path": "/home/finanzas/documents/hexagon/servertest",
-        "fields": [                                                                                                                                                                                  
+        "fields": [
             {
-                "name": "TEST",                                                                                                                                                                          
+                "name": "TEST",
                 "type": "str",
                 "max_length": 100,
                 "min_length": 1,
                 "searchable": True,    
-                "nullable": True,                                                                                                                                                                  
+                "nullable": True,
                 "description": "School display TEST"
             },
             {
-                "name": "TEST2",                                                                                                                                                                          
+                "name": "TEST2",
                 "type": "str",
                 "max_length": 100,
                 "min_length": 1,
-                "searchable": True,                                                                                                                                                                      
+                "searchable": True,
                 "description": "School display TEST2"
             },
             {
-                "name": "TEST3",                                                                                                                                                                          
+                "name": "TEST3",
                 "type": "int",
                 "max_length": 100,
                 "min_length": 1,
-                "searchable": True,    
-                "nullable": False,                                                                                                                                                                  
+                "searchable": True,
+                "nullable": False,
                 "description": "School display TEST3"
             }
         ]

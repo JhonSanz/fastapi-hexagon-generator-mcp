@@ -181,6 +181,30 @@ def _insert_before_next_class(content: str, class_name: str, line: str) -> tuple
     return "\n".join(lines), True
 
 
+def _insert_before_first_default(content: str, class_name: str, line: str) -> tuple[str, bool]:
+    """Insert a line in a class body before the first field with a default value.
+
+    Keeps required (non-default) fields above defaulted ones in dataclasses,
+    avoiding ``TypeError: non-default argument follows default argument``.
+    Falls back to appending at the end if no defaulted field is present.
+    """
+    lines = content.split("\n")
+    start, end = _find_class(lines, class_name)
+    if start == -1:
+        return content, False
+
+    for i in range(start + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith(('"""', "'''", "#")):
+            continue
+        if " = " in stripped:
+            indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+            lines.insert(i, f"{indent}{line}")
+            return "\n".join(lines), True
+
+    return _append_to_class_body(content, class_name, line)
+
+
 def _insert_in_example(content: str, class_name: str, example_entry: str) -> tuple[str, bool]:
     """Insert an example entry (e.g. ``"store_id": 1,``) into the ``"example": {...}``
     dict of a class's ``model_config``. Adds a trailing comma to the previous
@@ -336,7 +360,8 @@ class RelationshipBuilder:
         - Main entity: required FK goes before ``created_at``; nullable FK is
           appended at the end of the class (after ``updated_at``) to avoid
           dataclass TypeError (required-after-default).
-        - CreateData: appended at the end of the class (drops trailing ``pass``).
+        - CreateData: required FK is inserted before the first defaulted field
+          (or appended if there is none); nullable FK is appended at the end.
         - UpdateData: always Optional, appended at the end.
         """
         target_pascal = self._to_pascal_for(entity_module)
@@ -361,7 +386,10 @@ class RelationshipBuilder:
             content, main_ok = _insert_before(content, "created_at: datetime", [main_line])
 
         create_line = main_line
-        content, create_ok = _append_to_class_body(content, f"Create{target_pascal}Data", create_line)
+        if self.nullable:
+            content, create_ok = _append_to_class_body(content, f"Create{target_pascal}Data", create_line)
+        else:
+            content, create_ok = _insert_before_first_default(content, f"Create{target_pascal}Data", create_line)
 
         update_line = f"{fk_name}: Optional[int] = None"
         content, update_ok = _append_to_class_body(content, f"Update{target_pascal}Data", update_line)
