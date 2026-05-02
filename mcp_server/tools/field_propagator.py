@@ -98,23 +98,6 @@ def _replace_todo_block(
     return "\n".join(new_lines), True
 
 
-def _find_class_bounds(lines: list[str], class_name: str) -> tuple[int, int]:
-    """Return (start, end_exclusive) line indices for a class definition."""
-    start = -1
-    for i, line in enumerate(lines):
-        if re.match(rf"^class\s+{re.escape(class_name)}\b", line):
-            start = i
-            break
-    if start == -1:
-        return -1, -1
-    end = len(lines)
-    for j in range(start + 1, len(lines)):
-        if re.match(r"^class\s+\w+", lines[j]):
-            end = j
-            break
-    return start, end
-
-
 class FieldPropagator:
     """Propagates field definitions to all hexagonal layers."""
 
@@ -165,9 +148,10 @@ class FieldPropagator:
         content = path.read_text(encoding="utf-8")
         replaced_count = 0
 
-        # Main entity: required fields go in the TODO block; nullable fields are
-        # appended AFTER the class (after created_at/updated_at) to respect
-        # dataclass ordering — the template has non-default fields after the TODO.
+        # Main entity: required fields go in the TODO block (between `id` and
+        # `created_at`). Nullable fields have defaults, so they must come AFTER
+        # `updated_at: datetime` to respect dataclass ordering (non-default
+        # fields cannot follow defaulted ones).
         required_fields = [f for f in self.fields if not f.nullable]
         nullable_fields = [f for f in self.fields if f.nullable]
 
@@ -175,6 +159,15 @@ class FieldPropagator:
         content, ok = _replace_todo_block(content, "Add your domain fields here", main_required)
         if ok:
             replaced_count += 1
+            if nullable_fields:
+                lines = content.split("\n")
+                for i, line in enumerate(lines):
+                    if line.strip() == "updated_at: datetime":
+                        indent = _get_indent(line)
+                        inserted = [f"{indent}{self._entity_field(f)}" for f in nullable_fields]
+                        lines = lines[: i + 1] + inserted + lines[i + 1 :]
+                        content = "\n".join(lines)
+                        break
 
         # CreateData: required first, nullable last (no trailing non-default → safe)
         sorted_fields = sorted(self.fields, key=lambda f: f.nullable)
