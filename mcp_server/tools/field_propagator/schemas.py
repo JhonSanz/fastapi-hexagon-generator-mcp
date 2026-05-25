@@ -62,14 +62,14 @@ def apply(content: str, fields: list[FieldDefinition]) -> tuple[str, int]:
     content, n = apply_todo(
         content,
         "Add main fields for list view",
-        [f"{f.name}: {f.type}" for f in fields if not f.nullable],
+        [_list_field(f) for f in fields],
     )
     count += n
 
     content, n = apply_todo(
         content,
         "Add your fields",
-        [_example_value(f) for f in fields if not f.nullable],
+        [_example_value(f) for f in fields],
     )
     count += n
 
@@ -116,6 +116,12 @@ def _example_value(f: FieldDefinition) -> str:
         return f"# TODO: Add example for '{f.name}' (type: {f.type})"
     template = EXAMPLE_VALUES.get(f.type, "None")
     return f'"{f.name}": {template.format(name=f.name)},'
+
+
+def _list_field(f: FieldDefinition) -> str:
+    if f.nullable:
+        return f"{f.name}: Optional[{f.type}] = None"
+    return f"{f.name}: {f.type}"
 
 
 def _filter_field(f: FieldDefinition) -> str:
