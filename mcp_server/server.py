@@ -16,7 +16,7 @@ from hexagon_generator.core.generator_factory import GeneratorFactory
 from hexagon_generator.utils.validators import normalize_name
 
 from .schemas import TOOLS
-from .tools.todo_completer import TodoCompleter, scan_module_todos
+from .tools.todo_completer import explain_todos, scan_module_todos
 from .tools.field_propagator import FieldPropagator
 from .tools.module_wirer import ModuleWirer
 from .tools.relationship_builder import RelationshipBuilder
@@ -107,15 +107,17 @@ async def handle_generate_crud(arguments: dict[str, Any]) -> dict[str, Any]:
         module_path = Path(constant.TARGET_ROOT) / "src" / snake_name
         todo_info = scan_module_todos(module_path)
 
+    wired = ModuleWirer(module_name=snake_name, project_path=project_path).wire()
+
     return {
         "success": True,
         "module": snake_name,
         "pascal_name": pascal_name,
         "project_path": project_path,
         "message": f"CRUD module '{pascal_name}' generated with {todo_info['total_todos']} TODOs",
+        "wired": wired,
         "next_steps": [
             f"define_fields module_name='{snake_name}' to declare fields",
-            f"wire_module module_name='{snake_name}' to register routes",
             "complete_todos on use case files to clean up business logic placeholders",
         ],
     }
@@ -129,15 +131,6 @@ async def handle_define_fields(arguments: dict[str, Any]) -> dict[str, Any]:
         fields=arguments["fields"],
     )
     return propagator.propagate()
-
-
-@json_handler
-async def handle_wire_module(arguments: dict[str, Any]) -> dict[str, Any]:
-    wirer = ModuleWirer(
-        module_name=arguments["module_name"],
-        project_path=_resolve_project_path(arguments),
-    )
-    return wirer.wire()
 
 
 @json_handler
@@ -185,22 +178,19 @@ async def handle_list_todos(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 @json_handler
-async def handle_complete_todos(arguments: dict[str, Any]) -> dict[str, Any]:
-    completer = TodoCompleter()
-    return await completer.complete_file_todos(
+async def handle_explain_todos(arguments: dict[str, Any]) -> dict[str, Any]:
+    return explain_todos(
         Path(arguments["file_path"]),
         arguments.get("context", ""),
-        action=arguments.get("action", "remove"),
     )
 
 
 HANDLERS = {
     "generate_crud": handle_generate_crud,
     "define_fields": handle_define_fields,
-    "wire_module": handle_wire_module,
     "add_relationship": handle_add_relationship,
     "list_todos": handle_list_todos,
-    "complete_todos": handle_complete_todos,
+    "explain_todos": handle_explain_todos,
     "generate_builtin": handle_generate_builtin,
 }
 

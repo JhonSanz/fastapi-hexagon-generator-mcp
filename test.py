@@ -7,10 +7,9 @@ from pathlib import Path
 from mcp_server.server import (
     handle_generate_crud,
     handle_define_fields,
-    handle_wire_module,
     handle_add_relationship,
     handle_list_todos,
-    handle_complete_todos,
+    handle_explain_todos,
     handle_generate_builtin,
 )
 
@@ -68,19 +67,13 @@ async def main() -> None:
         ],
     }))
 
-    # # 3. Register School's router and exception handlers in src/common
-    # show("wire_module: school", await handle_wire_module({
-    #     "module_name": "school",
-    #     "project_path": PROJECT,
-    # }))
-
-    # # 4. Scaffold the Student CRUD module (target of the relationship)
+    # # 3. Scaffold the Student CRUD module (target of the relationship)
     # show("generate_crud: student", await handle_generate_crud({
     #     "module_name": "Student",
     #     "project_path": PROJECT,
     # }))
 
-    # # 5. Define Student fields
+    # # 4. Define Student fields
     # show("define_fields: student", await handle_define_fields({
     #     "module_name": "student",
     #     "project_path": PROJECT,
@@ -111,13 +104,7 @@ async def main() -> None:
     #     ],
     # }))
 
-    # # 6. Wire Student
-    # show("wire_module: student", await handle_wire_module({
-    #     "module_name": "student",
-    #     "project_path": PROJECT,
-    # }))
-
-    # # 7. School has many Students (FK + relationship() declarations on Student)
+    # # 5. School has many Students (FK + relationship() declarations on Student)
     # show("add_relationship: school -> student (one_to_many)", await handle_add_relationship({
     #     "source_module": "school",
     #     "target_module": "student",
@@ -126,13 +113,13 @@ async def main() -> None:
     #     "nullable": False,
     # }))
 
-    # # 8. Scan for any TODOs left in the School module after all the above
+    # # 6. Scan for any TODOs left in the School module after all the above
     # todos = show("list_todos: school", await handle_list_todos({
     #     "module_name": "school",
     #     "project_path": PROJECT,
     # }))
 
-    # # 9. Pick the file with the most TODOs and clean it up with complete_todos
+    # # 7. Pick the file with the most TODOs and fetch guidance for them
     # file_counts: dict[str, int] = {}
     # for t in todos.get("todos", []):
     #     file_counts[t["file_path"]] = file_counts.get(t["file_path"], 0) + 1
@@ -140,14 +127,13 @@ async def main() -> None:
     # if file_counts:
     #     target_rel = max(file_counts, key=file_counts.get)
     #     target_abs = str(Path(PROJECT) / target_rel)
-    #     show(f"complete_todos: {target_rel}", await handle_complete_todos({
+    #     show(f"explain_todos: {target_rel}", await handle_explain_todos({
     #         "file_path": target_abs,
-    #         "action": "remove",
     #     }))
     # else:
-    #     print("\n(no remaining TODOs to clean)")
+    #     print("\n(no remaining TODOs to explain)")
 
-    # # 10. Copy a built-in module (user/role/auth/smtp) into the project
+    # # 8. Copy a built-in module (user/role/auth/smtp) into the project
     # show("generate_builtin: user", await handle_generate_builtin({
     #     "app_name": "user",
     #     "project_path": PROJECT,

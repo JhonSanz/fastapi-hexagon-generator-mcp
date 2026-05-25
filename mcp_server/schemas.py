@@ -93,28 +93,6 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
-        name="wire_module",
-        description=(
-            "Register a module's router and exception handlers in the project. "
-            "Automatically completes wiring TODOs in src/common/router.py and "
-            "src/common/exceptions_mapping.py. Run this after generate_crud."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "module_name": {
-                    "type": "string",
-                    "description": "Name of the module to wire (e.g., 'school')",
-                },
-                "project_path": {
-                    "type": "string",
-                    "description": "Absolute path to the FastAPI project directory (e.g., '/home/user/my-project')",
-                },
-            },
-            "required": ["module_name", "project_path"],
-        },
-    ),
-    Tool(
         name="add_relationship",
         description=(
             "Add a relationship between two existing modules. "
@@ -173,28 +151,23 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
-        name="complete_todos",
+        name="explain_todos",
         description=(
-            "Complete remaining TODOs in a file. Default action 'remove' deletes TODO comments directly. "
-            "Use 'guidance' to get suggestions instead. "
-            "For field declarations use define_fields. For wiring use wire_module."
+            "Return structured guidance for the actionable TODOs in a file: each TODO with its "
+            "surrounding code context plus per-layer rules. The LLM is expected to implement each "
+            "TODO using this guidance — this tool does not modify the file. "
+            "For field declarations use define_fields instead."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Absolute path to the file containing TODOs to complete",
-                },
-                "action": {
-                    "type": "string",
-                    "enum": ["remove", "guidance"],
-                    "description": "Action: 'remove' deletes TODO comments from file (default), 'guidance' returns suggestions",
-                    "default": "remove",
+                    "description": "Absolute path to the file containing TODOs to explain",
                 },
                 "context": {
                     "type": "string",
-                    "description": "Additional context about the domain (only used with action='guidance')",
+                    "description": "Optional domain context to include in the response (e.g., business rules)",
                 },
             },
             "required": ["file_path"],

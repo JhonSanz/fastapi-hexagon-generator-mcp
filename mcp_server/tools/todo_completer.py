@@ -1,4 +1,4 @@
-"""Tool to scan and provide structured guidance for completing TODO comments."""
+"""Tool to scan and provide structured guidance for actionable TODO comments."""
 
 import re
 from collections import Counter
@@ -116,119 +116,54 @@ def scan_module_todos(module_path: Path) -> dict[str, Any]:
     }
 
 
-class TodoCompleter:
-    """Completes TODO comments by removing them or providing guidance."""
+def explain_todos(file_path: Path, context: str = "") -> dict[str, Any]:
+    """Return structured guidance for actionable TODOs in a file.
 
-    def _remove_todos_from_file(
-        self,
-        file_path: Path,
-    ) -> dict[str, Any]:
-        """Remove actionable TODO comments and their trailing blank lines from a file.
+    Skips TODOs delegated to define_fields. The LLM is expected to implement
+    each actionable TODO using the returned context and layer rules.
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
 
-        Skips TODOs delegated to define_fields or wire_module.
+    content = file_path.read_text(encoding="utf-8")
+    file_type = file_path.stem
+    category = _determine_category(file_path)
 
-        Returns:
-            Result dictionary with count of removed TODOs.
-        """
-        content = file_path.read_text(encoding="utf-8")
-        lines = content.split("\n")
+    all_todos = _extract_todos_from_file(file_path)
+    if not all_todos:
+        return {"success": True, "file_path": str(file_path), "todos_found": 0}
 
-        all_todos = _extract_todos_from_file(file_path)
-        if not all_todos:
-            return {"success": True, "file_path": str(file_path), "todos_removed": 0}
+    actionable_todos = []
+    delegated_count = 0
+    for todo in all_todos:
+        if is_delegated_todo(todo["content"]):
+            delegated_count += 1
+        else:
+            actionable_todos.append(todo)
 
-        # Collect line indices to remove (0-based)
-        remove_indices: set[int] = set()
-        for todo in all_todos:
-            if is_delegated_todo(todo["content"]):
-                continue
-            idx = todo["line_number"] - 1
-            remove_indices.add(idx)
-            # Also remove the blank line immediately after, if present
-            next_idx = idx + 1
-            if next_idx < len(lines) and lines[next_idx].strip() == "":
-                remove_indices.add(next_idx)
+    todo_contexts = get_file_context(content, actionable_todos) if actionable_todos else []
+    guidelines = get_todo_guidelines(file_type)
 
-        if not remove_indices:
-            return {"success": True, "file_path": str(file_path), "todos_removed": 0}
+    replacements = []
+    for todo, ctx in zip(actionable_todos, todo_contexts):
+        replacements.append({
+            "line": todo["line_number"],
+            "todo": todo["content"],
+            "before": ctx["before"],
+            "after": ctx["after"],
+            "guideline": guidelines.get("guideline", ""),
+        })
 
-        new_lines = [line for i, line in enumerate(lines) if i not in remove_indices]
-        file_path.write_text("\n".join(new_lines), encoding="utf-8")
-
-        return {
-            "success": True,
-            "file_path": str(file_path),
-            "todos_removed": len([i for i in remove_indices if i < len(lines) and TODO_PATTERN.search(lines[i])]),
-        }
-
-    def _guidance_for_todos(
-        self,
-        file_path: Path,
-        context: str = "",
-    ) -> dict[str, Any]:
-        """Return structured guidance for actionable TODOs (original behavior)."""
-        content = file_path.read_text(encoding="utf-8")
-        file_type = file_path.stem
-        category = _determine_category(file_path)
-
-        all_todos = _extract_todos_from_file(file_path)
-        if not all_todos:
-            return {"success": True, "file_path": str(file_path), "todos_found": 0}
-
-        actionable_todos = []
-        delegated_count = 0
-        for todo in all_todos:
-            if is_delegated_todo(todo["content"]):
-                delegated_count += 1
-            else:
-                actionable_todos.append(todo)
-
-        todo_contexts = get_file_context(content, actionable_todos) if actionable_todos else []
-        guidelines = get_todo_guidelines(file_type)
-
-        replacements = []
-        for todo, ctx in zip(actionable_todos, todo_contexts):
-            replacements.append({
-                "line": todo["line_number"],
-                "todo": todo["content"],
-                "before": ctx["before"],
-                "after": ctx["after"],
-                "guideline": guidelines.get("guideline", ""),
-            })
-
-        result: dict[str, Any] = {
-            "success": True,
-            "file_path": str(file_path),
-            "file_type": file_type,
-            "category": category,
-            "actionable": len(actionable_todos),
-            "delegated": delegated_count,
-            "replacements": replacements,
-            "layer_rules": LAYER_RULES.get(category, {}),
-        }
-        if context:
-            result["context"] = context
-        return result
-
-    async def complete_file_todos(
-        self,
-        file_path: Path,
-        context: str = "",
-        action: str = "remove",
-    ) -> dict[str, Any]:
-        """Complete TODOs in a file.
-
-        Args:
-            file_path: Path to the file containing TODOs
-            context: Additional context about the domain
-            action: "remove" to delete TODO comments, "guidance" for suggestions
-
-        Returns:
-            Result dictionary
-        """
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-
-        if action == "remove":
-            return self._remove_todos_from_file(file_path)
-        return self._guidance_for_todos(file_path, context)
+    result: dict[str, Any] = {
+        "success": True,
+        "file_path": str(file_path),
+        "file_type": file_type,
+        "category": category,
+        "actionable": len(actionable_todos),
+        "delegated": delegated_count,
+        "replacements": replacements,
+        "layer_rules": LAYER_RULES.get(category, {}),
+    }
+    if context:
+        result["context"] = context
+    return result
