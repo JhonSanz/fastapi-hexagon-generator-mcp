@@ -29,6 +29,12 @@ def one_to_many(b) -> None:
     ))
 
     _wire_fk_on_target(b, fk_name)
+    b.apply_op(
+        b.src(b.source_snake, "domain", "entities.py"),
+        lambda c: entity.add_reverse_to_source_entity(
+            c, b.source_pascal, plural_target, b.target_snake, b.target_pascal, is_list=True,
+        ),
+    )
 
 
 def one_to_one(b) -> None:
@@ -49,6 +55,12 @@ def one_to_one(b) -> None:
     ))
 
     _wire_fk_on_target(b, fk_name)
+    b.apply_op(
+        b.src(b.source_snake, "domain", "entities.py"),
+        lambda c: entity.add_reverse_to_source_entity(
+            c, b.source_pascal, b.target_snake, b.target_snake, b.target_pascal, is_list=False,
+        ),
+    )
 
 
 def many_to_many(b) -> None:

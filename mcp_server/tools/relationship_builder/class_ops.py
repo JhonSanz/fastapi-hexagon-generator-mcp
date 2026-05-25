@@ -4,7 +4,12 @@ import re
 
 
 def find_class(lines: list[str], class_name: str) -> tuple[int, int]:
-    """Return (start, end_exclusive) for a class definition. (-1, -1) if absent."""
+    """Return (start, end_exclusive) for a class definition. (-1, -1) if absent.
+
+    `end` points just past the current class body, *before* any decorators
+    attached to the next class — so an inserter can append to the body
+    without landing between `@dataclass` and `class Next:`.
+    """
     start = -1
     for i, line in enumerate(lines):
         if re.match(rf"^class\s+{re.escape(class_name)}\b", line):
@@ -15,7 +20,10 @@ def find_class(lines: list[str], class_name: str) -> tuple[int, int]:
     end = len(lines)
     for j in range(start + 1, len(lines)):
         if re.match(r"^class\s+\w+", lines[j]):
-            end = j
+            k = j
+            while k - 1 > start and lines[k - 1].lstrip().startswith("@"):
+                k -= 1
+            end = k
             break
     return start, end
 

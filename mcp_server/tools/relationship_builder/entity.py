@@ -1,5 +1,7 @@
 """Atomic FK operations on domain/entities.py."""
 
+import re
+
 from .class_ops import append_to_class_body, insert_before_first_default
 from .insertion import insert_before
 
@@ -47,3 +49,75 @@ def add_fk_to_entity(
     if parts:
         return content, True, f"Added {fk_name} to {', '.join(parts)}"
     return content, False, f"Failed to add {fk_name}"
+
+
+def add_reverse_to_source_entity(
+    content: str,
+    source_pascal: str,
+    field_name: str,
+    related_snake: str,
+    related_pascal: str,
+    is_list: bool,
+) -> tuple[str, bool, str]:
+    """Add the inverse-side field to the source's main entity.
+
+    For one_to_many: `products: list[Product] = field(default_factory=list)`.
+    For one_to_one:  `product: Optional[Product] = None`.
+
+    Always appended at the end of the class (after `updated_at`), since the
+    field carries a default and would otherwise break dataclass ordering.
+    Inserts the related-entity import and `field`/`Optional` typing imports
+    if not already present.
+    """
+    if re.search(rf"^\s+{re.escape(field_name)}\s*:", content, re.MULTILINE):
+        return content, False, f"{field_name} already exists on {source_pascal}"
+
+    if is_list:
+        field_line = f"{field_name}: list[{related_pascal}] = field(default_factory=list)"
+    else:
+        field_line = f"{field_name}: Optional[{related_pascal}] = None"
+
+    content = _ensure_dataclass_import(content, "field") if is_list else content
+    content = _ensure_typing_import(content, "Optional") if not is_list else content
+    content = _ensure_related_import(content, related_snake, related_pascal)
+
+    content, ok = append_to_class_body(content, source_pascal, field_line)
+    if not ok:
+        return content, False, f"Failed to add {field_name} to {source_pascal}"
+    return content, True, f"Added {field_name} to {source_pascal}"
+
+
+def _ensure_dataclass_import(content: str, name: str) -> str:
+    pattern = re.compile(r"^from\s+dataclasses\s+import\s+([^\n]+)$", re.MULTILINE)
+    match = pattern.search(content)
+    if not match:
+        return f"from dataclasses import {name}\n" + content
+    names = [n.strip() for n in match.group(1).split(",")]
+    if name in names:
+        return content
+    new_line = f"from dataclasses import {', '.join(names + [name])}"
+    return content[: match.start()] + new_line + content[match.end():]
+
+
+def _ensure_typing_import(content: str, name: str) -> str:
+    pattern = re.compile(r"^from\s+typing\s+import\s+([^\n]+)$", re.MULTILINE)
+    match = pattern.search(content)
+    if not match:
+        return f"from typing import {name}\n" + content
+    names = [n.strip() for n in match.group(1).split(",")]
+    if name in names:
+        return content
+    new_line = f"from typing import {', '.join(names + [name])}"
+    return content[: match.start()] + new_line + content[match.end():]
+
+
+def _ensure_related_import(content: str, related_snake: str, related_pascal: str) -> str:
+    import_line = f"from src.{related_snake}.domain.entities import {related_pascal}"
+    if import_line in content:
+        return content
+    last_import = 0
+    for match in re.finditer(r"^(from\s+\S+\s+import\s+[^\n]+|import\s+[^\n]+)$", content, re.MULTILINE):
+        last_import = match.end()
+    if last_import == 0:
+        return import_line + "\n" + content
+    return content[:last_import] + "\n" + import_line + content[last_import:]
