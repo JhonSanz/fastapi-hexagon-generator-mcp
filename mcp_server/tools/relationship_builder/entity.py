@@ -22,7 +22,7 @@ def add_fk_to_entity(
         return content, False, f"{fk_name} already exists"
 
     main_line = (
-        f"{fk_name}: Optional[int] = None" if nullable else f"{fk_name}: int"
+        f"{fk_name}: int | None = None" if nullable else f"{fk_name}: int"
     )
 
     if nullable:
@@ -35,7 +35,7 @@ def add_fk_to_entity(
     else:
         content, create_ok = insert_before_first_default(content, f"Create{target_pascal}Data", main_line)
 
-    update_line = f"{fk_name}: Optional[int] = None"
+    update_line = f"{fk_name}: int | None = None"
     content, update_ok = append_to_class_body(content, f"Update{target_pascal}Data", update_line)
 
     parts = []
@@ -62,12 +62,12 @@ def add_reverse_to_source_entity(
     """Add the inverse-side field to the source's main entity.
 
     For one_to_many: `products: list[Product] = field(default_factory=list)`.
-    For one_to_one:  `product: Optional[Product] = None`.
+    For one_to_one:  `product: Product | None = None`.
 
     Always appended at the end of the class (after `updated_at`), since the
     field carries a default and would otherwise break dataclass ordering.
-    Inserts the related-entity import and `field`/`Optional` typing imports
-    if not already present.
+    Inserts the related-entity import and, for the list case, the `field`
+    import, if not already present.
     """
     if re.search(rf"^\s+{re.escape(field_name)}\s*:", content, re.MULTILINE):
         return content, False, f"{field_name} already exists on {source_pascal}"
@@ -75,10 +75,9 @@ def add_reverse_to_source_entity(
     if is_list:
         field_line = f"{field_name}: list[{related_pascal}] = field(default_factory=list)"
     else:
-        field_line = f"{field_name}: Optional[{related_pascal}] = None"
+        field_line = f"{field_name}: {related_pascal} | None = None"
 
     content = _ensure_dataclass_import(content, "field") if is_list else content
-    content = _ensure_typing_import(content, "Optional") if not is_list else content
     content = _ensure_related_import(content, related_snake, related_pascal)
 
     content, ok = append_to_class_body(content, source_pascal, field_line)
@@ -96,18 +95,6 @@ def _ensure_dataclass_import(content: str, name: str) -> str:
     if name in names:
         return content
     new_line = f"from dataclasses import {', '.join(names + [name])}"
-    return content[: match.start()] + new_line + content[match.end():]
-
-
-def _ensure_typing_import(content: str, name: str) -> str:
-    pattern = re.compile(r"^from\s+typing\s+import\s+([^\n]+)$", re.MULTILINE)
-    match = pattern.search(content)
-    if not match:
-        return f"from typing import {name}\n" + content
-    names = [n.strip() for n in match.group(1).split(",")]
-    if name in names:
-        return content
-    new_line = f"from typing import {', '.join(names + [name])}"
     return content[: match.start()] + new_line + content[match.end():]
 
 

@@ -89,7 +89,7 @@ def _schema_field(f: FieldDefinition, optional: bool = False) -> str:
         return f"# TODO: Define schema field for '{f.name}' (type: {f.type})"
 
     is_optional = optional or f.nullable
-    py_type = f"Optional[{f.type}]" if is_optional else f.type
+    py_type = f"{f.type} | None" if is_optional else f.type
     kwargs: list[str] = ["None"] if is_optional else ["..."]
 
     if f.type == "str":
@@ -120,9 +120,9 @@ def _example_value(f: FieldDefinition) -> str:
 
 def _list_field(f: FieldDefinition) -> str:
     if f.nullable:
-        return f"{f.name}: Optional[{f.type}] = None"
+        return f"{f.name}: {f.type} | None = None"
     return f"{f.name}: {f.type}"
 
 
 def _filter_field(f: FieldDefinition) -> str:
-    return f'{f.name}: Optional[{f.type}] = Field(None, description="Filter by {f.name}")'
+    return f'{f.name}: {f.type} | None = Field(None, description="Filter by {f.name}")'

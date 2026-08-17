@@ -15,7 +15,7 @@ def add_fk_column(
         return content, False, f"{col_name} column already exists"
 
     nullable_str = "True" if nullable else "False"
-    mapped_type = "Optional[int]" if nullable else "int"
+    mapped_type = "int | None" if nullable else "int"
     unique_part = ", unique=True" if unique else ""
 
     fk_line = (

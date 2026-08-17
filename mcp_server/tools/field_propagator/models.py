@@ -23,7 +23,7 @@ def _model_column(f: FieldDefinition) -> str:
     if f.type == "str":
         sa_type_expr = f"String({f.max_length})" if f.max_length else "Text"
 
-    mapped_type = f"Optional[{f.type}]" if f.nullable else f.type
+    mapped_type = f"{f.type} | None" if f.nullable else f.type
     parts = [sa_type_expr, f"nullable={'True' if f.nullable else 'False'}"]
     if f.searchable and f.type == "str":
         parts.append("index=True")

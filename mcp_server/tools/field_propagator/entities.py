@@ -48,7 +48,7 @@ def _entity_field(f: FieldDefinition, optional_all: bool = False) -> str:
     if not f.is_known_type:
         return f"{f.name}: ...  # TODO: Define type for '{f.type}' field"
     if f.nullable or optional_all:
-        return f"{f.name}: Optional[{f.type}] = None"
+        return f"{f.name}: {f.type} | None = None"
     return f"{f.name}: {f.type}"
 
 
