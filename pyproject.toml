@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastapi-hexagon-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP Server for generating FastAPI CRUD modules with hexagonal architecture"
 readme = "readme.md"
 license = "MIT"
@@ -34,8 +34,8 @@ classifiers = [
     "Framework :: FastAPI",
 ]
 dependencies = [
-    "mcp>=1.0",
-    "fastapi-hexagon==0.1.1",
+    "mcp>=1.0,<2.0",
+    "fastapi-hexagon==0.3.0",
 ]
 
 [project.urls]

@@ -16,12 +16,12 @@ def add_fk_to_schemas(
         return content, False, f"{fk_name} already in schemas"
 
     required_token = "None" if nullable else "..."
-    py_type = "Optional[int]" if nullable else "int"
+    py_type = "int | None" if nullable else "int"
 
     base_line = f"{fk_name}: {py_type} = Field({required_token}, gt=0)"
     content, base_ok = append_to_class_body(content, f"{target_pascal}Base", base_line)
 
-    update_line = f"{fk_name}: Optional[int] = Field(None, gt=0)"
+    update_line = f"{fk_name}: int | None = Field(None, gt=0)"
     content, update_ok = insert_before_model_config(
         content, f"Update{target_pascal}Request", update_line
     )
